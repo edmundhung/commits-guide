@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   captureSource,
@@ -17,11 +19,15 @@ import {
   writePatchSeries,
 } from "./git.js";
 import { validateMessage } from "./message-format.js";
-import { parseArgs } from "./utils.js";
+import { formatError, parseArgs, replaceDirectory } from "./utils.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const clients = [".agents", ".claude"] as const;
 
 function exitWithUsage(status = 2): never {
   const stream = status === 0 ? process.stdout : process.stderr;
   stream.write(`usage:
+  commits-guide setup
   commits-guide capture <ref>
   commits-guide verify <revision-or-range>
   commits-guide verify <base>..<target> --source <source.patch>
@@ -124,9 +130,43 @@ function runVerify(args: string[]): void {
   if (sourceErrors.length || results.some(({ errors }) => errors.length)) process.exitCode = 1;
 }
 
+function runSetup(args: string[]): void {
+  if (args.length) exitWithUsage();
+
+  const source = path.resolve(__dirname, "..", "skills", "commits-guide");
+  const destinations = clients.map((client) =>
+    path.join(os.homedir(), client, "skills", "commits-guide"));
+  const installed: string[] = [];
+  const skipped: { destination: string; error: unknown }[] = [];
+
+  // Client locations are independent: one unavailable client should not block the others.
+  for (const destination of destinations) {
+    try {
+      replaceDirectory(source, destination);
+      installed.push(destination);
+    } catch (error) {
+      skipped.push({ destination, error });
+    }
+  }
+
+  if (!installed.length) {
+    throw new Error(`cannot install the skill:\n${skipped.map(({ destination, error }) =>
+      `- ${destination}: ${formatError(error)}`).join("\n")}`);
+  }
+
+  process.stdout.write(`Commits Guide is ready.\nSkills:\n${installed.map(
+    (destination) => `- ${destination}`,
+  ).join("\n")}\n`);
+  if (skipped.length) {
+    process.stdout.write(`Skipped skill locations:\n${skipped.map(({ destination, error }) =>
+      `- ${destination}: ${formatError(error)}`).join("\n")}\n`);
+  }
+}
+
 function runCli(): void {
   const [command = "help", ...args] = process.argv.slice(2);
   switch (command) {
+    case "setup": runSetup(args); break;
     case "capture": runCapture(args); break;
     case "verify": runVerify(args); break;
     case "help":
