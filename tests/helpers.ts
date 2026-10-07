@@ -62,9 +62,9 @@ function createTemporaryDirectory(prefix: string): string {
 }
 
 /** Create a deterministic Git repository with one base commit and no user hooks or signing. */
-function createRepository(root: string): string {
+function createRepository(root: string, objectFormat: "sha1" | "sha256" = "sha1"): string {
   fs.mkdirSync(root, { recursive: true });
-  runGit(root, "init", "-q");
+  runGit(root, "init", "-q", `--object-format=${objectFormat}`);
   runGit(root, "config", "user.name", "Commits Guide Test");
   runGit(root, "config", "user.email", "commits-guide-test@invalid");
   runGit(root, "config", "commit.gpgSign", "false");

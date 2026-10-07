@@ -1,19 +1,30 @@
 #!/usr/bin/env node
 
+import fs from "node:fs";
+import path from "node:path";
+
 import {
   captureSource,
   findRepositoryRoot,
   isAncestor,
+  listCommits,
   listMergeCommits,
+  readCommit,
   readCommitTree,
+  readSourcePatch,
   resolveCommit,
+  treesMatch,
   writePatchSeries,
 } from "./git.js";
+import { validateMessage } from "./message-format.js";
+import { parseArgs } from "./utils.js";
 
 function exitWithUsage(status = 2): never {
   const stream = status === 0 ? process.stdout : process.stderr;
   stream.write(`usage:
   commits-guide capture <ref>
+  commits-guide verify <revision-or-range>
+  commits-guide verify <base>..<target> --source <source.patch>
 `);
   process.exit(status);
 }
@@ -34,7 +45,6 @@ function runCapture(args: string[]): void {
   }
 
   const source = captureSource(repo, sourceHead);
-
   const startTree = readCommitTree(repo, start);
   if (source.tree === startTree) {
     throw new Error("source state contains no changes after the review start");
@@ -43,10 +53,82 @@ function runCapture(args: string[]): void {
   writePatchSeries(repo, start, source.commit);
 }
 
+function runVerify(args: string[]): void {
+  const parsed = parseArgs(args);
+  if (!parsed || parsed.positionals.length !== 1 ||
+      [...parsed.options.keys()].some((name) => name !== "source")) {
+    exitWithUsage();
+  }
+  const [revision] = parsed.positionals;
+  const sourceOption = parsed.options.get("source");
+  const sourceFile = sourceOption ? path.resolve(sourceOption) : undefined;
+  const repo = findRepositoryRoot();
+  if (sourceFile && !fs.existsSync(sourceFile)) {
+    throw new Error(`source patch does not exist: ${sourceFile}`);
+  }
+
+  const sourceErrors: string[] = [];
+  let commitIds: string[];
+  if (sourceFile) {
+    const range = revision.split("..");
+    if (range.length !== 2 || range.some((ref) => !ref) || revision.includes("...")) {
+      throw new Error("--source requires an explicit <base>..<target> range");
+    }
+    const [baseRef, targetRef] = range;
+    const source = readSourcePatch(sourceFile);
+    const base = resolveCommit(repo, baseRef);
+    const target = resolveCommit(repo, targetRef);
+    // Matching the explicit range base prevents a caller from comparing equivalent trees while
+    // silently changing where the captured history begins.
+    if (base !== source.base) {
+      sourceErrors.push("range base does not match the source patch base");
+    }
+    if (!isAncestor(repo, source.base, target)) {
+      sourceErrors.push("target does not descend from the source base");
+    }
+
+    let sourceTip: string;
+    try {
+      sourceTip = resolveCommit(repo, source.tip);
+    } catch {
+      throw new Error("source patch final commit is unavailable; run capture again");
+    }
+    if (!treesMatch(repo, sourceTip, target)) {
+      sourceErrors.push("target does not reproduce the source tree");
+    }
+    commitIds = listCommits(repo, revision);
+  } else if (revision.includes("..")) {
+    commitIds = listCommits(repo, revision);
+  } else {
+    commitIds = [resolveCommit(repo, revision)];
+  }
+
+  const results = commitIds.map((commit) => {
+    const verified = readCommit(repo, commit);
+    return {
+      ...verified,
+      errors: validateMessage(repo, verified.message, verified.parent, verified.commit),
+    };
+  });
+  const output = results.flatMap(({ commit, message, errors }) => [
+    `${errors.length ? "❌" : "✅"} ${commit.slice(0, 7)} ${message.split("\n", 1)[0]}`,
+    ...errors.map((error) => `   - ${error}`),
+  ]);
+  if (sourceFile) {
+    output.push(
+      `${sourceErrors.length ? "❌" : "✅"} Source matches target`,
+      ...sourceErrors.map((error) => `   - ${error}`),
+    );
+  }
+  process.stdout.write(`${output.join("\n")}\n`);
+  if (sourceErrors.length || results.some(({ errors }) => errors.length)) process.exitCode = 1;
+}
+
 function runCli(): void {
   const [command = "help", ...args] = process.argv.slice(2);
   switch (command) {
     case "capture": runCapture(args); break;
+    case "verify": runVerify(args); break;
     case "help":
     case "-h":
     case "--help": exitWithUsage(0); break;
