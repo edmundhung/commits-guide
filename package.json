@@ -1,0 +1,39 @@
+{
+  "name": "commits-guide",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Prepare clear, contextual Git history for review.",
+  "license": "MIT",
+  "author": "Edmund Hung",
+  "homepage": "https://github.com/edmundhung/commits-guide",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edmundhung/commits-guide.git"
+  },
+  "bin": {
+    "commits-guide": "dist/commits-guide.js"
+  },
+  "files": [
+    "dist",
+    "skills/commits-guide",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepack": "npm run build",
+    "test": "npm run build && tsc -p tests/tsconfig.json && node --test tests/*.test.ts"
+  },
+  "keywords": [
+    "git",
+    "code-review",
+    "agent-skills"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2"
+  }
+}
