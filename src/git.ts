@@ -98,6 +98,35 @@ function listChangedFiles(repo: string, parent: string, commit: string): string[
   ]).stdout.split("\0").filter(Boolean);
 }
 
+function usesSparseCheckout(repo: string): boolean {
+  const readBoolean = (name: string) => executeGit(repo, ["config", "--bool", name], {
+    allowedStatuses: [0, 1],
+  }).stdout.trim() === "true";
+  return readBoolean("core.sparseCheckout") || readBoolean("index.sparse");
+}
+
+function hasUnmergedFiles(repo: string): boolean {
+  return Boolean(executeGit(repo, ["ls-files", "--unmerged"]).stdout.trimEnd());
+}
+
+function listDirtySubmodules(repo: string): string[] {
+  const output = executeGit(repo, [
+    "submodule", "foreach", "--quiet", "--recursive",
+    'if test -n "$(git status --porcelain=v1 --untracked-files=all)"; then printf "%s\\n" "$displaypath"; fi',
+  ]).stdout.trimEnd();
+  return output ? output.split("\n") : [];
+}
+
+function listGitlinks(repo: string, env?: NodeJS.ProcessEnv): string[] {
+  // Git records both submodules and embedded repositories as mode 160000.
+  return executeGit(repo, ["ls-files", "--stage", "-z"], { env }).stdout
+    .split("\0")
+    .flatMap((record) => {
+      const match = record.match(/^160000 [0-9a-f]+ \d+\t(.*)$/s);
+      return match ? [match[1]] : [];
+    });
+}
+
 function loadCommitIntoIndex(repo: string, commit: string, env: NodeJS.ProcessEnv): void {
   executeGit(repo, ["read-tree", commit], { env });
 }
@@ -125,6 +154,11 @@ function captureWorktreeTree(repo: string, sourceHead: string): string {
     loadCommitIntoIndex(repo, sourceHead, env);
     stageWorktree(repo, env);
 
+    const originalGitlinks = new Set(listGitlinks(repo));
+    const embedded = listGitlinks(repo, env).filter((file) => !originalGitlinks.has(file));
+    if (embedded.length) {
+      throw new Error(`cannot capture embedded Git repositories:\n${embedded.join("\n")}`);
+    }
     return writeIndexTree(repo, env);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -132,6 +166,23 @@ function captureWorktreeTree(repo: string, sourceHead: string): string {
 }
 
 function captureSource(repo: string, sourceHead: string): CapturedSource {
+  // A normal `git add -A` cannot see omitted sparse-checkout files, so capturing them could record
+  // false deletions.
+  if (usesSparseCheckout(repo)) {
+    throw new Error(
+      "cannot capture a sparse checkout because files outside the checkout may look deleted",
+    );
+  }
+  if (hasUnmergedFiles(repo)) {
+    throw new Error("cannot capture a worktree with unresolved merge conflicts");
+  }
+  const dirtySubmodules = listDirtySubmodules(repo);
+  if (dirtySubmodules.length) {
+    throw new Error(
+      `cannot capture uncommitted changes inside submodules:\n${dirtySubmodules.join("\n")}`,
+    );
+  }
+
   const tree = captureWorktreeTree(repo, sourceHead);
   const headTree = readCommitTree(repo, sourceHead);
   if (tree === headTree) return { commit: sourceHead, tree };

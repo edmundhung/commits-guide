@@ -118,6 +118,39 @@ describe("capture", () => {
     }
   });
 
+  test("rejects worktree states it cannot represent", () => {
+    const root = createTemporaryDirectory("commits-guide-capture-reject-");
+    try {
+      const sparse = createRepository(path.join(root, "sparse"));
+      runGit(sparse, "config", "core.sparseCheckout", "true");
+      assert.throws(() => captureWorkingTree(sparse), /sparse checkout/);
+
+      const conflict = createRepository(path.join(root, "conflict"));
+      runGit(conflict, "switch", "-q", "-c", "side");
+      fs.writeFileSync(path.join(conflict, "tracked.txt"), "side\n");
+      commitAll(conflict, "side");
+      runGit(conflict, "switch", "-q", "main");
+      fs.writeFileSync(path.join(conflict, "tracked.txt"), "main\n");
+      commitAll(conflict, "main");
+      assert.notEqual(runCommand("git", ["merge", "-q", "side"], { cwd: conflict }).status, 0);
+      assert.throws(() => captureWorkingTree(conflict), /merge conflicts/);
+
+      const dependency = createRepository(path.join(root, "dependency"));
+      const superproject = createRepository(path.join(root, "superproject"));
+      runGit(superproject, "-c", "protocol.file.allow=always", "submodule", "add", "-q",
+        dependency, "dependency");
+      commitAll(superproject, "add dependency");
+      fs.appendFileSync(path.join(superproject, "dependency", "tracked.txt"), "dirty\n");
+      assert.throws(() => captureWorkingTree(superproject), /uncommitted changes inside submodules/);
+
+      const embedded = createRepository(path.join(root, "embedded"));
+      createRepository(path.join(embedded, "nested"));
+      assert.throws(() => captureWorkingTree(embedded), /embedded Git repositories/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("rejects a base outside the current history", () => {
     const root = createTemporaryDirectory("commits-guide-capture-ancestor-");
     try {
