@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 type ParsedArgs = {
   positionals: string[];
   options: Map<string, string>;
@@ -23,4 +26,14 @@ function parseArgs(args: string[]): ParsedArgs | undefined {
   return { positionals, options };
 }
 
-export { parseArgs };
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function replaceDirectory(source: string, destination: string): void {
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.rmSync(destination, { recursive: true, force: true });
+  fs.cpSync(source, destination, { recursive: true });
+}
+
+export { formatError, parseArgs, replaceDirectory };

@@ -2,6 +2,14 @@
 
 Commits Guide helps coding agents turn Git changes into a clear review tour. Commit order guides the reviewer through the code, while messages explain the design and preserve useful context.
 
+## Setup
+
+```sh
+npx commits-guide setup
+```
+
+This copies the bundled skill into supported clients. Then ask your agent to use Commits Guide when creating commits or preparing a branch for review. The CLI examples use `npx`, so it needs no separate installation.
+
 ## Workflow
 
 ```sh
