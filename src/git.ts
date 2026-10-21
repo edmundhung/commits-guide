@@ -21,6 +21,11 @@ type CapturedSource = {
   tree: string;
 };
 
+type SourcePatch = {
+  base: string;
+  tip: string;
+};
+
 type CommitDetails = {
   commit: string;
   parent: string;
@@ -96,6 +101,13 @@ function listChangedFiles(repo: string, parent: string, commit: string): string[
   return executeGit(repo, [
     "diff", "--name-only", "-z", parent, commit,
   ]).stdout.split("\0").filter(Boolean);
+}
+
+function treesMatch(repo: string, left: string, right: string): boolean {
+  // Git's tree comparison includes file contents, paths, executable modes, and symlinks.
+  return executeGit(repo, ["diff", "--quiet", left, right, "--"], {
+    allowedStatuses: [0, 1],
+  }).status === 0;
 }
 
 function usesSparseCheckout(repo: string): boolean {
@@ -202,6 +214,20 @@ function writePatchSeries(repo: string, start: string, tip: string): void {
   ], { stdout: "inherit" });
 }
 
+function readSourcePatch(file: string): SourcePatch {
+  const contents = fs.readFileSync(file, "utf8");
+  const bases = [...contents.matchAll(/^base-commit: ([0-9a-f]{40})\r?$/gm)];
+  if (bases.length !== 1) {
+    throw new Error("source patch must contain exactly one format-patch base-commit marker");
+  }
+  // Every mail entry begins with a `From <commit>` marker; the last entry is the captured tip.
+  const commits = [
+    ...contents.matchAll(/^From ([0-9a-f]{40}) Mon Sep 17 00:00:00 2001\r?$/gm),
+  ];
+  if (!commits.length) throw new Error("source patch contains no commits");
+  return { base: bases[0][1], tip: commits.at(-1)![1] };
+}
+
 export {
   captureSource,
   findRepositoryRoot,
@@ -211,6 +237,8 @@ export {
   listMergeCommits,
   readCommit,
   readCommitTree,
+  readSourcePatch,
   resolveCommit,
+  treesMatch,
   writePatchSeries,
 };
